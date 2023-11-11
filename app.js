@@ -5,6 +5,9 @@ import bodyParser from "body-parser";
 import { mongoose } from "mongoose";
 import encrypt from "mongoose-encryption";
 import dotenv from "dotenv";
+//import md5 from "md5";
+import bcrypt from "bcrypt";
+const saltRounds = 10;
 dotenv.config();
 const uri = "mongodb://127.0.0.1:27017/userDB";
 //mongoose.connect("mongodb://localhost:27017/userDB");
@@ -48,50 +51,65 @@ app.get("/register", function(req,res){
 });
 app.post("/login", async function(req,res){
     const username= req.body.username;
-    const password= req.body.password;
-    
     try{
         /***
          * Capturing data from db is impossible without async and await
          */
     const foundUser = await User.findOne({email: req.body.username});
+
     console.log("db returned user: "+foundUser);
-    if (foundUser){
-        console.log("user found!!");
-        if(foundUser.password==password){
+        //bcrypt.compare(someOtherPlaintextPassword, hash, function(err, result) {
+        // result == false
+    //});
+    bcrypt.compare(req.body.password,foundUser.password, function(err,result){
+        console.log("Inside Compare Method");
+        if(result){
             console.log("password matched!!");
-        res.render("secrets");
+            res.render("secrets");
+        }else{
+            console.log("password did not match!!");
+            res.render("login");
+        }
+    })
+        
+       
+
+
+
+    }catch(err){
+        if(err){
+            console.log("findOne got Error: " + err);
         }else{
             console.log("password NOT matched!!");
             res.render("login");
         }
-    }else{
-        res.render("login");
     }
-    }catch(err){
-        if(err){
-            console.log("findOne got Error: " + err);
-        }
-    }
+
+
+
+    
+    
 
 });
-app.post("/register", function(req,res){
-
-    const newUser = new User({
-        email: req.body.username,
-        password: req.body.password
-    });
-    console.log("Trying to save new user: "+JSON.stringify(newUser));
-    res.render("login");
-    try{
-        newUser.save();
-    }catch(err){
-        if(err){
-            console.log("we got Error: " + err);
-        }else{
-            res.render("secrets");
+app.post("/register", async function(req,res){
+    const newUser = await bcrypt.hash(req.body.password,saltRounds,function(err,hash){
+        const newUser = new User({
+            email: req.body.username,
+            password: hash
+        });
+        try{
+            newUser.save();
+        }catch(err){
+            if(err){
+                console.log("we got Error: " + err);
+            }
         }
-    }
+        console.log("Trying to save new user: "+JSON.stringify(newUser));
+    });
+
+    
+    res.render("secrets");
+
 });
 app.listen(port, () => {
     console.log(`Server running on port ${port}`);
