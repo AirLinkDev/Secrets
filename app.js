@@ -4,15 +4,16 @@ import bodyParser from "body-parser";
 //import ejs from "ejs";
 import { mongoose } from "mongoose";
 //import encrypt from "mongoose-encryption";
-//import dotenv from "dotenv";
+import dotenv from "dotenv";
 //import md5 from "md5";
 //import bcrypt from "bcrypt";
 import session from "express-session";
 import passport from "passport";
 import passportLocalMongoose from "passport-local-mongoose";
-
+import findOrCreate from "mongoose-findorcreate";
+import GoogleStrategy from "passport-google-oauth20";
 //const saltRounds = 10;
-//dotenv.config();
+dotenv.config();
 const app = express();
 app.use(express.static("public"));
 app.set('view engine','ejs');
@@ -36,20 +37,56 @@ mongoose.connect(uri)
 //mongoose.set("useCreateIndex",true);
 const userSchema = new mongoose.Schema({
     email: String,
-    password: String
+    password: String,
+    googleId: String,
+    secret: String
 });
 //userSchema.plugin(encrypt,{secret : process.env.SECRET,encryptedFields : ["password"] });
 userSchema.plugin(passportLocalMongoose);
+userSchema.plugin(findOrCreate);
 //add additional fields into array as needed
-const User = new mongoose.model("user",userSchema);
+const User = new mongoose.model("User",userSchema);
 passport.use(User.createStrategy());
-passport.serializeUser(User.serializeUser());
-passport.deserializeUser(User.deserializeUser());
-
+// passport.serializeUser(User.serializeUser());//only works with local authentication
+// passport.deserializeUser(User.deserializeUser());
+passport.serializeUser(function(user, done) {//works with local authentication
+    done(null, user);
+  });
+  
+  passport.deserializeUser(function(user, done) {
+    done(null, user);
+  });
+//console.log("myClientID is: "+process.env.CLIENT_ID);
+passport.use(new GoogleStrategy.Strategy({
+    clientID : process.env.CLIENT_ID,
+    clientSecret : process.env.CLIENT_SECRET,
+    callbackURL : "http://localhost:3000/auth/google/secrets",
+    userProfileURL : "https://www.googleapis.com/oauth2/v3/userinfo"
+  },
+  function(accessToken, refreshToken, profile, cb) {
+    console.log("Profile: "+JSON.stringify(profile));
+    User.findOrCreate({ googleId: profile.id }, function (err, user) {
+      return cb(err, user);
+    });
+  }
+));
 
 
 
 const port = 3000;
+// app.get("/auth/google", function(req,res){
+//     passport.authenticate("google", { scope: ["profile"] });
+// });
+app.get('/auth/google',
+  passport.authenticate("google", { scope: ["profile"] }));
+
+app.get('/auth/google/secrets', 
+  passport.authenticate("google", { failureRedirect: "/login" }),
+  function(req, res) {
+    // Successful authentication, redirect home.
+    console.log("authentication successful!!!!");
+    res.redirect("/secrets");
+  });
 app.get("/", function(req,res){
     res.render("home");
 });
@@ -57,21 +94,57 @@ app.get("/login", function(req,res){
     res.render("login");
 
     }); 
-app.get("/logout", function(req,res){
-    req.logout();
-    res.render("home");
-
-    }); 
+app.get("/logout", function(req, res, next) {
+        console.log("inside logout");
+        req.logout(function(err) {
+            console.log("trying to logout");
+          if (err) { 
+            console.log(err);
+            return next(err);
+         }
+          res.redirect('/');
+        });
+      });
 
 app.get("/register", function(req,res){
     res.render("register");
 });
-app.get("/secrets", function(req,res){
+app.get("/secrets", async function(req,res){
+    const foundUsers = await User.find({"secret": {$ne: null}}).exec();
+    console.log("my array: "+JSON.stringify(foundUsers));
+    if(foundUsers){
+        res.render("secrets", {usersWithSecrets: foundUsers});
+    }
+});
+
+app.get("/submit", function(req,res){
     if(req.isAuthenticated()){
-        res.render("secrets");
+        res.render("submit");
     }else{
         res.redirect("/login");
     }
+});
+app.post("/submit", async function(req,res){
+ const submittedSecret = req.body.secret;
+ try{
+ console.log("User ID: " + req.user._id);
+ }catch(err){
+    console.log(err);
+    res.redirect("/login");
+ }
+ const foundUser = await User.findById(req.user._id).exec();
+
+        if(foundUser){
+            foundUser.secret = submittedSecret;
+            foundUser.save();
+            res.redirect("/secrets");
+        }else{
+            res.redirect("/login");
+        }
+        console.log("Result : ", foundUser); 
+    
+
+
 });
 app.post("/login", async function(req,res){
     const user = new User({
